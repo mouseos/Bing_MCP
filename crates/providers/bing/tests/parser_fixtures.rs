@@ -58,7 +58,10 @@ fn video_fixture_parses_units_with_churl_targets() {
     assert_eq!(page.items.len(), 39);
 
     let first = &page.items[0];
-    assert_eq!(first.title, "ニセ天然vsガチ天然替え歌で解説");
+    assert_eq!(
+        first.title,
+        "ニセ天然vsガチ天然【テストの点数どっちが上？】替え歌で解説"
+    );
     assert_eq!(first.url, "https://www.tiktok.com/@latte_1oo");
     assert_eq!(first.source.as_deref(), Some("TikTok"));
     assert_eq!(first.uploader.as_deref(), Some("latte_1oo"));
@@ -74,8 +77,10 @@ fn video_fixture_parses_units_with_churl_targets() {
 
 #[test]
 fn news_fixture_parses_cards_from_attributes() {
+    // 10 real cards (the page also has 10 inner `news-card-body` blocks,
+    // which are not results).
     let items = parse_news_results(NEWS_HTML, 50).unwrap();
-    assert_eq!(items.len(), 20);
+    assert_eq!(items.len(), 10);
 
     let first = &items[0];
     assert_eq!(

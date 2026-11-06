@@ -149,7 +149,10 @@ impl<T> SearchResult<T> {
 
 fn build_http(user_agent: &'static str) -> Result<reqwest::Client> {
     let mut headers = HeaderMap::new();
-    headers.insert(reqwest::header::USER_AGENT, HeaderValue::from_static(user_agent));
+    headers.insert(
+        reqwest::header::USER_AGENT,
+        HeaderValue::from_static(user_agent),
+    );
     headers.insert(
         ACCEPT,
         HeaderValue::from_static(

@@ -49,6 +49,18 @@ fn is_search_vertical(vertical: &str) -> bool {
     matches!(vertical, "web" | "image" | "video" | "news")
 }
 
+/// Strictly resolve a caller-supplied vertical for URL building: unknown
+/// names are an error, never a silent fall-back to web.
+fn strict_vertical(vertical: &str) -> Result<&'static str> {
+    match vertical.trim().to_lowercase().as_str() {
+        "web" => Ok("web"),
+        "image" | "images" => Ok("image"),
+        "video" | "videos" => Ok("video"),
+        "news" => Ok("news"),
+        other => Err(anyhow!("unsupported vertical: {other}")),
+    }
+}
+
 fn market(mkt: &str) -> String {
     let m = mkt.trim();
     if m.is_empty() {
@@ -104,10 +116,8 @@ pub fn build_page_url(
     mkt: &str,
     setlang: &str,
 ) -> Result<String> {
-    let vertical = normalize_vertical(vertical);
-    if !is_search_vertical(vertical) {
-        return Err(anyhow!("unsupported vertical for search URL: {vertical}"));
-    }
+    let vertical = strict_vertical(vertical)?;
+    debug_assert!(is_search_vertical(vertical));
     let page = page.max(1);
     let mut url = format!(
         "{SEARCH_HOST}{}?q={}",
@@ -140,10 +150,10 @@ pub fn build_search_url(query: &str, vertical: &str, mkt: &str, setlang: &str) -
 /// Build the suggestions API URL for a query. `vertical` is `web` (default),
 /// `images` or `videos` — the app uses path variants of the same endpoint.
 pub fn suggest_url(query: &str, vertical: &str, mkt: &str, setlang: &str) -> Result<String> {
-    let suffix = match normalize_vertical(vertical) {
-        "web" => "",
-        "image" => "/images",
-        "video" => "/videos",
+    let suffix = match vertical.trim().to_lowercase().as_str() {
+        "web" | "" => "",
+        "image" | "images" => "/images",
+        "video" | "videos" => "/videos",
         other => return Err(anyhow!("unsupported suggest vertical: {other}")),
     };
     Ok(format!(

@@ -84,14 +84,22 @@ fn parse_duration(unit: &scraper::ElementRef) -> Option<String> {
     normalize_duration(du)
 }
 
-/// The meta row that carries only the hosting site name: it has no
-/// view-count/date element and is not the channel row.
+/// The hosting site name lives in the meta row that has no view-count /
+/// date element, as the row's first span; the same row may also carry the
+/// channel span, which is excluded here.
 fn parse_source(unit: &scraper::ElementRef) -> Option<String> {
     for row in unit.select(&META_ROW_SEL) {
         if row.select(&VIEWS_SEL).next().is_some() || row.select(&DATE_SEL).next().is_some() {
             continue;
         }
-        let t = text_of(&row);
+        let mut parts = String::new();
+        for child in row.children().filter_map(scraper::ElementRef::wrap) {
+            if CHANNEL_SEL.matches(&child) {
+                continue;
+            }
+            parts.push_str(&text_of(&child));
+        }
+        let t = clean_text(&parts);
         if !t.is_empty() {
             return Some(t);
         }
