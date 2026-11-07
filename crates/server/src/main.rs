@@ -351,6 +351,30 @@ mod tests {
             assert!(!item["title"].as_str().unwrap().is_empty());
         }
         assert!(r["total_hits"].as_i64().unwrap_or(0) > 0);
+        // The v7 API also returns related queries; the envelope used to
+        // always carry an empty list here.
+        let related = r["related_queries"].as_array().unwrap();
+        assert!(!related.is_empty(), "related queries empty: {r}");
+        assert!(related.iter().all(|q| !q.as_str().unwrap_or("").is_empty()));
+
+        // Page 2 (offset paging) must be a different result set.
+        let r2 = call_tool(
+            &client,
+            "bing_web_search",
+            json!({"query": "テスト", "page": 2, "limit": 5}),
+        )
+        .await;
+        assert_eq!(r2["ok"], true, "web search page 2 failed: {r2}");
+        let items2 = r2["items"].as_array().unwrap();
+        assert!(
+            !items2.is_empty(),
+            "web search page 2 returned 0 items: {r2}"
+        );
+        assert_ne!(
+            items[0]["url"], items2[0]["url"],
+            "page 2 returned the same first result as page 1"
+        );
+        assert_eq!(items2[0]["rank"], 11);
     }
 
     #[tokio::test]

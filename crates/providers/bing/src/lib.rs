@@ -3,23 +3,29 @@
 //!
 //! This crate is the provider library behind the **Bing_MCP** server
 //! (stdio JSON-RPC). It is modelled on what the official Bing Android app
-//! does, which an APK analysis established in detail: the app is a WebView
-//! shell around `https://www.bing.com/search?q=%s&form=%s&sdkhh=1` — there
-//! is no signed native search API — so this library fetches Bing's
-//! server-rendered result pages and extracts the results from the HTML.
-//! No API key, account, or signature is involved.
+//! does, which an APK analysis established in detail. The app *displays*
+//! results in a WebView shell around
+//! `https://www.bing.com/search?q=%s&form=%s&sdkhh=1`, so image, video
+//! and news still fetch those same server-rendered pages here. Web
+//! search instead calls Bing's native v7 search API
+//! (`https://www.bingapis.com/api/v7/search`), which the app embeds
+//! with a public `appid` for related queries: its response carries the
+//! full web result set, so the API is consumed directly. Suggestions
+//! likewise use the app's own suggestions API. No user API key,
+//! account, or signature is involved anywhere.
 //!
 //! Two details decide whether Bing answers at all:
 //!
-//! * `mkt` / `setlang` must be pinned. Without them Bing mis-detects the
-//!   market and returns an empty "no results" page. Empty arguments fall
+//! * The market must be pinned (`mkt`/`setlang` on the pages, `cc` /
+//!   `setlang` on the APIs). Without them Bing mis-detects the market
+//!   and returns an empty "no results" response. Empty arguments fall
 //!   back to `ja-JP` / `ja`.
 //! * Image search additionally needs the app-style treatment — a mobile
 //!   user agent plus `form=L2GV01&sdkhh=1` — because the desktop image
 //!   page loads its results with JavaScript only. [`BingSearchClient::
 //!   image_search`] handles that internally.
 //!
-//! # Example (offline: build URLs and parse saved pages)
+//! # Example (offline: build URLs and parse a saved API response)
 //!
 //! ```
 //! use bing_search::{build_search_url, parse_web_results};
@@ -27,12 +33,18 @@
 //! let url = build_search_url("テスト", "web", "ja-JP", "ja").unwrap();
 //! assert!(url.starts_with("https://www.bing.com/search?q="));
 //!
-//! let html = r#"<ol id="b_results"><li class="b_algo">
-//!   <h2><a href="https://example.com/">Example</a></h2>
-//!   <div class="b_caption"><p>Snippet</p></div></li></ol>"#;
-//! let page = parse_web_results(html, 10).unwrap();
+//! let json: serde_json::Value = serde_json::json!({
+//!     "webPages": {
+//!         "totalEstimatedMatches": 1234,
+//!         "value": [{"name": "Example", "url": "https://example.com/",
+//!                    "displayUrl": "https://example.com", "snippet": "Snippet."}]
+//!     },
+//!     "relatedSearches": {"value": [{"text": "example query"}]}
+//! });
+//! let page = parse_web_results(&json, 10).unwrap();
 //! assert_eq!(page.items.len(), 1);
 //! assert_eq!(page.items[0].url, "https://example.com/");
+//! assert_eq!(page.related_queries, vec!["example query".to_string()]);
 //! ```
 //!
 //! # Example (live search; not run in tests)
@@ -70,7 +82,7 @@ pub use common::{clean_text, decode_entities, urlencode, MOBILE_USER_AGENT, USER
 pub use image::{parse_image_results, ImageItem, ImageResults};
 pub use news::{parse_news_results, NewsItem};
 pub use suggest::{parse_suggest_json, SuggestResult, Suggestion};
-pub use urlbuild::{build_page_url, build_search_url, suggest_url};
+pub use urlbuild::{build_page_url, build_search_url, suggest_url, web_api_url};
 pub use video::{parse_video_results, VideoItem, VideoResults};
 pub use web::{parse_web_results, WebItem, WebResults};
 
@@ -83,7 +95,7 @@ pub fn verticals() -> Value {
     json!({
         "provider": PROVIDER,
         "verticals": [
-            { "id": "web", "label": "Web search", "tool": "bing_web_search", "supported": true },
+            { "id": "web", "label": "Web search (native v7 search API)", "tool": "bing_web_search", "supported": true },
             { "id": "image", "label": "Image search (app-style page, mobile UA)", "tool": "bing_image_search", "supported": true },
             { "id": "video", "label": "Video search", "tool": "bing_video_search", "supported": true },
             { "id": "news", "label": "News search (first page only)", "tool": "bing_news_search", "supported": true },
@@ -141,6 +153,11 @@ impl<T> SearchResult<T> {
         self
     }
 
+    pub fn with_related_queries(mut self, related_queries: Vec<String>) -> Self {
+        self.related_queries = related_queries;
+        self
+    }
+
     pub fn with_note_opt(mut self, note: Option<String>) -> Self {
         self.note = note;
         self
@@ -171,9 +188,9 @@ fn build_http(user_agent: &'static str) -> Result<reqwest::Client> {
         .build()?)
 }
 
-/// Bing search client. Holds two HTTP stacks — desktop UA for web /
-/// video / news, mobile UA for image search — sharing one cookie jar
-/// each. Construct once and reuse.
+/// Bing search client. Holds two HTTP stacks — desktop UA for the
+/// JSON APIs and the video / news pages, mobile UA for image search —
+/// sharing one cookie jar each. Construct once and reuse.
 #[derive(Debug, Clone)]
 pub struct BingSearchClient {
     http: reqwest::Client,
@@ -214,7 +231,7 @@ impl BingSearchClient {
         self.get_with(&self.http_mobile, url, referer).await
     }
 
-    /// Fetch a JSON document (suggestions API).
+    /// Fetch a JSON document (the app's APIs: v7 search, suggestions).
     pub async fn get_json(&self, url: &str) -> Result<Value> {
         let resp = self
             .http

@@ -2,11 +2,15 @@
 //!
 //! The app (APK analysis, round 1) opens
 //! `https://www.bing.com/search?q=%s&form=%s&sdkhh=1` in its WebView for web
-//! search and swaps the path per vertical. The MCP fetches the *desktop*
-//! rendering for web / video / news, so `form`/`sdkhh` are omitted there;
-//! image search is the exception — it only returns server-rendered results
-//! with the app-style parameters *and* a mobile user agent (round 2), so
-//! its URL keeps `form=L2GV01&sdkhh=1`.
+//! search and swaps the path per vertical. The page URLs built here serve
+//! image / video / news (fetched as the *desktop* rendering, so
+//! `form`/`sdkhh` are omitted there) and the `bing_build_search_url`
+//! tool. Image search is the exception — it only returns server-rendered
+//! results with the app-style parameters *and* a mobile user agent
+//! (round 2), so its URL keeps `form=L2GV01&sdkhh=1`.
+//!
+//! Web *search* itself does not fetch a page: it calls the app's native
+//! v7 search API ([`web_api_url`]) — see `web.rs`.
 //!
 //! Two parameters are effectively mandatory everywhere: without
 //! `mkt`/`setlang` Bing mis-detects the market and returns an empty result
@@ -24,6 +28,14 @@ pub const SEARCH_HOST: &str = "https://www.bing.com";
 pub const SUGGEST_APPID: &str = "6D0A9B8C5100E9ECC7E11A104ADD76C10219804B";
 /// Suggestions API base (the app's own endpoint, APK `d4.java`).
 pub const SUGGEST_BASE: &str = "https://www.bingapis.com/api/v7/suggestions";
+/// App-embedded public identifier for the v7 search API. The app uses
+/// this endpoint for related queries (APK `n38.java`); the response
+/// also carries the full web result set, which `bing_web_search` uses.
+/// Like the suggestions appid, it ships inside the app and is not a
+/// user credential.
+pub const V7_SEARCH_APPID: &str = "8B3803673894068AC59BD9DA9BC2B4D382C6227E";
+/// v7 search API base (the app's own endpoint, APK `n38.java`).
+pub const V7_SEARCH_BASE: &str = "https://www.bingapis.com/api/v7/search";
 
 /// Results per page for web search (`first` advances in steps of 10).
 pub const WEB_PER_PAGE: i64 = 10;
@@ -147,6 +159,20 @@ pub fn build_search_url(query: &str, vertical: &str, mkt: &str, setlang: &str) -
     build_page_url(query, vertical, 1, mkt, setlang)
 }
 
+/// Build the v7 search API URL for a 1-based `page` of web search —
+/// the URL `bing_web_search` fetches. Paging is `count`/`offset`
+/// based (10 results per page), unlike the HTML pages' `first`.
+pub fn web_api_url(query: &str, page: i64, mkt: &str, setlang: &str) -> String {
+    let page = page.max(1);
+    let offset = (page - 1) * WEB_PER_PAGE;
+    format!(
+        "{V7_SEARCH_BASE}?appid={V7_SEARCH_APPID}&q={}&cc={}&setlang={}&count={WEB_PER_PAGE}&offset={offset}",
+        urlencode(query.trim()),
+        country_code(mkt),
+        urlencode(&language(setlang))
+    )
+}
+
 /// Build the suggestions API URL for a query. `vertical` is `web` (default),
 /// `images` or `videos` — the app uses path variants of the same endpoint.
 pub fn suggest_url(query: &str, vertical: &str, mkt: &str, setlang: &str) -> Result<String> {
@@ -206,6 +232,19 @@ mod tests {
         assert!(url.contains("&cc=JP&setlang=ja&history=0"));
         let img = suggest_url("テスト", "images", "ja-JP", "ja").unwrap();
         assert!(img.contains("/api/v7/suggestions/images?q="));
+    }
+
+    #[test]
+    fn web_api_url_uses_appid_country_and_offset_paging() {
+        let first = web_api_url("テスト", 1, "ja-JP", "ja");
+        assert_eq!(
+            first,
+            "https://www.bingapis.com/api/v7/search?appid=8B3803673894068AC59BD9DA9BC2B4D382C6227E&q=%E3%83%86%E3%82%B9%E3%83%88&cc=JP&setlang=ja&count=10&offset=0"
+        );
+        let second = web_api_url("テスト", 2, "ja-JP", "ja");
+        assert!(second.contains("&count=10&offset=10"));
+        let third = web_api_url("test", 3, "en-US", "en");
+        assert!(third.contains("&cc=US&setlang=en&count=10&offset=20"));
     }
 
     #[test]

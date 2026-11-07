@@ -73,7 +73,7 @@ pub fn tool_definitions() -> Vec<Value> {
     vec![
         tool_def(
             "bing_web_search",
-            "Search the Microsoft Bing web index. Returns title, destination URL (Bing's tracking redirect is unwrapped), the displayed URL and a snippet, plus the reported total hit count. 10 results per page.",
+            "Search the Microsoft Bing web index via Bing's native v7 search API (the endpoint embedded in the Bing app). Returns title, direct destination URL, the displayed URL and a snippet, plus the reported total hit count and related queries. 10 results per page.",
             paged_schema(10, 10, json!({})),
         ),
         tool_def(

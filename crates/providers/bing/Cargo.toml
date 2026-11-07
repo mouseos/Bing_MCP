@@ -1,6 +1,6 @@
 [package]
 name = "bing-mcp-provider"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 license = "MIT"
 description = "Microsoft Bing search client library (web, video, news, suggestions) — derived from APK analysis of the Bing Android app, no API key or login required. Imported as `bing_search`; also powers the Bing_MCP server."

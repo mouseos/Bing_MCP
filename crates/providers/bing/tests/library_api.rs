@@ -3,8 +3,8 @@
 
 use bing_search::{
     build_search_url, clean_text, parse_image_results, parse_news_results, parse_suggest_json,
-    parse_video_results, parse_web_results, suggest_url, verticals, BingSearchClient, NewsItem,
-    SearchResult, Suggestion, WebItem, PROVIDER,
+    parse_video_results, parse_web_results, suggest_url, verticals, web_api_url, BingSearchClient,
+    NewsItem, SearchResult, Suggestion, WebItem, PROVIDER,
 };
 
 #[test]
@@ -42,16 +42,20 @@ fn url_builders_work_offline() {
 
     let suggest = suggest_url("テスト", "videos", "ja-JP", "ja").unwrap();
     assert!(suggest.contains("/api/v7/suggestions/videos?q="));
+
+    let api = web_api_url("テスト", 2, "ja-JP", "ja");
+    assert!(api.starts_with("https://www.bingapis.com/api/v7/search?appid="));
+    assert!(api.contains("&cc=JP&setlang=ja&count=10&offset=10"));
 }
 
 #[test]
 fn parsers_work_from_the_root() {
-    let web = parse_web_results(
-        r#"<ol id="b_results"><li class="b_algo"><h2><a href="https://example.com/">T</a></h2></li></ol>"#,
-        10,
-    )
-    .unwrap();
+    let web_json: serde_json::Value = serde_json::json!({
+        "webPages": {"value": [{"name": "T", "url": "https://example.com/"}]}
+    });
+    let web = parse_web_results(&web_json, 10).unwrap();
     assert_eq!(web.items.len(), 1);
+    assert_eq!(web.items[0].title, "T");
 
     let video_html = r#"<div class="mc_vtvc"><a href="/videos/riverview/relatedvideo?q=x&amp;churl=https%3A%2F%2Fyoutu.be%2Fabc">v</a><div class="mc_vtvc_title" title="Clip"></div></div>"#;
     let videos = parse_video_results(video_html, 10).unwrap();

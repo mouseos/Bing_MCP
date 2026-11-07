@@ -1,5 +1,7 @@
-//! Offline parser tests against real Bing result pages captured during
-//! the APK analysis (Japanese market, query "テスト", 2026-11-06/07).
+//! Offline parser tests against real Bing result payloads captured
+//! during the APK analysis (Japanese market, query "テスト",
+//! 2026-11-06/07): HTML pages for image / video / news, API JSON for
+//! web (v7 search) and suggestions.
 //! These assert counts and representative fields of the actual payloads.
 
 use bing_search::{
@@ -7,46 +9,64 @@ use bing_search::{
     parse_web_results,
 };
 
-const WEB_HTML: &str = include_str!("fixtures/fixture-web-ja.html");
+const WEB_JSON: &str = include_str!("fixtures/fixture-web-ja.json");
+const WEB_PAGE2_JSON: &str = include_str!("fixtures/fixture-web-page2-ja.json");
 const VIDEO_HTML: &str = include_str!("fixtures/fixture-video-ja.html");
 const NEWS_HTML: &str = include_str!("fixtures/fixture-news-ja.html");
 const IMAGE_HTML: &str = include_str!("fixtures/fixture-image-ja.html");
 const SUGGEST_JSON: &str = include_str!("fixtures/fixture-suggest-ja.json");
 
 #[test]
-fn web_fixture_parses_ten_results_with_total_and_next_page() {
-    let page = parse_web_results(WEB_HTML, 50).unwrap();
+fn web_fixture_parses_ten_results_with_total_next_page_and_related() {
+    let value: serde_json::Value = serde_json::from_str(WEB_JSON).unwrap();
+    let page = parse_web_results(&value, 50).unwrap();
     assert_eq!(page.items.len(), 10);
-    assert_eq!(page.total_hits, Some(70500));
+    assert_eq!(page.total_hits, Some(258000));
     assert!(page.has_next_page);
 
+    // The v7 API returns direct destination URLs (no /ck/a redirect).
     let first = &page.items[0];
     assert_eq!(first.rank, 1);
-    assert_eq!(first.title, "Bing");
-    assert_eq!(first.url, "https://www.bing.com/version");
-    assert_eq!(
-        first.display_url.as_deref(),
-        Some("https://www.bing.com › version")
-    );
-
-    // The second result's href is a Bing click-tracking redirect; the
-    // parser must surface the decoded destination.
-    let second = &page.items[1];
-    assert_eq!(
-        second.url,
-        "https://news.mynavi.jp/techplus/article/20260902-4900008/"
-    );
-    assert!(second.title.contains("Windows Search"));
-    assert!(second
+    assert_eq!(first.title, "インターネット回線の速度テスト | Fast.com");
+    assert_eq!(first.url, "https://fast.com/ja/");
+    assert_eq!(first.display_url.as_deref(), Some("https://fast.com/ja"));
+    assert!(first
         .snippet
         .as_deref()
         .unwrap_or("")
-        .contains("Microsoftは8月27日"));
+        .contains("FAST.comのスピードテストは"));
+
+    let second = &page.items[1];
+    assert_eq!(second.url, "https://speed-test.com/ja");
+    assert!(second.title.contains("スピードテスト"));
+
+    assert_eq!(page.related_queries.len(), 10);
+    assert_eq!(page.related_queries[0], "テスト インターネット");
+    assert_eq!(page.related_queries[1], "テスト インターネット 回線");
+}
+
+#[test]
+fn web_fixture_page2_is_a_different_result_set() {
+    // Captured with count=10&offset=10 (the client's page-2 request).
+    let value: serde_json::Value = serde_json::from_str(WEB_PAGE2_JSON).unwrap();
+    let page = parse_web_results(&value, 50).unwrap();
+    assert_eq!(page.items.len(), 10);
+    assert_eq!(page.total_hits, Some(258000));
+    assert!(page.has_next_page);
+
+    let first = &page.items[0];
+    assert_eq!(first.url, "https://www.musen-lan.com/speed/");
+    assert!(first.title.contains("BNRスピードテスト"));
+
+    let page1: serde_json::Value = serde_json::from_str(WEB_JSON).unwrap();
+    let page1 = parse_web_results(&page1, 50).unwrap();
+    assert_ne!(first.url, page1.items[0].url);
 }
 
 #[test]
 fn web_fixture_limit_truncates() {
-    let page = parse_web_results(WEB_HTML, 3).unwrap();
+    let value: serde_json::Value = serde_json::from_str(WEB_JSON).unwrap();
+    let page = parse_web_results(&value, 3).unwrap();
     assert_eq!(page.items.len(), 3);
     assert_eq!(page.items[2].rank, 3);
 }

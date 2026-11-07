@@ -119,7 +119,7 @@ Public API (all importable from the crate root):
 | Client | `BingSearchClient` (`web_search` / `image_search` / `video_search` / `news_search` / `suggest`, returning `anyhow::Result`) |
 | Shared result type | `SearchResult<T>`, `PROVIDER`, `verticals()` |
 | Per-vertical item types | `WebItem`, `ImageItem`, `VideoItem`, `NewsItem`, `SuggestResult` / `Suggestion` |
-| Offline helpers | `parse_web_results` / `parse_image_results` / `parse_video_results` / `parse_news_results` / `parse_suggest_json` (parse saved page HTML / API JSON), `build_search_url` / `build_page_url` / `suggest_url` (URL generation), `clean_text`, `decode_entities`, `urlencode` |
+| Offline helpers | `parse_web_results` (v7 search API JSON) / `parse_image_results` / `parse_video_results` / `parse_news_results` / `parse_suggest_json` (parse saved page HTML / API JSON), `build_search_url` / `build_page_url` / `suggest_url` / `web_api_url` (URL generation), `clean_text`, `decode_entities`, `urlencode` |
 
 All result types implement serde `Serialize` / `Deserialize`, so they can be
 saved to and loaded from JSON. Offline examples live in
@@ -163,6 +163,7 @@ Response (excerpt):
   "count": 5,
   "total_hits": 70500,
   "next_page": 2,
+  "related_queries": ["miso ramen recipe easy", "miso ramen homemade"],
   "items": [
     {
       "rank": 1,
@@ -175,8 +176,8 @@ Response (excerpt):
 }
 ```
 
-Web result links are returned with Bing's click-tracking redirect (`/ck/a`)
-already unwrapped to the real destination.
+Web result links are the direct destination URLs returned by the native
+API — no click-tracking redirect is involved.
 
 ## Design
 
@@ -194,11 +195,25 @@ crates/
 ```
 
 The implementation follows what an APK analysis of the official Bing Android
-app established: the app has no signed native search API — it is a WebView
-shell over `https://www.bing.com/search?q=%s&form=%s&sdkhh=1`. This server
-likewise reads the server-rendered result pages Bing already ships to
-browsers, using CSS selectors. No certificate pinning or login stands in
-the search path.
+app established: the app displays results in a WebView shell over
+`https://www.bing.com/search?q=%s&form=%s&sdkhh=1`, and for images, video
+and news this server likewise reads the server-rendered result pages Bing
+already ships to browsers, using CSS selectors. No certificate pinning or
+login stands in the search path. Web search is the one exception: it calls
+the app's embedded native search API instead of a page (next section).
+
+### Why web search is fetched differently
+
+Web search uses Bing's native search API
+(`https://www.bingapis.com/api/v7/search`). The API is embedded in the
+Bing app, where its in-app role is fetching related queries — but its
+response carries the full web result set (title, URL, snippet, total hit
+count) plus the related queries, so this server consumes the response
+directly and now returns `related_queries` as well. URLs come back as
+direct links, so no redirect unwrapping is needed. Image, video and news
+results are not part of this API's response, so those three keep reading
+result pages as before. Suggestions likewise use the app's own API (see
+below).
 
 ### Why image search is fetched differently
 
@@ -209,11 +224,13 @@ agent plus the app-style parameters `form=L2GV01&sdkhh=1` and the pinned
 `bing_image_search` alone uses that form. That page shows no total count,
 so image results carry no `total`.
 
-### About the suggestions "appid"
+### About the "appid" values
 
-Only the suggestions backend requires an `appid`. It is not a user secret:
-it is a public value embedded in the Bing app itself, the same one the
-app's search box uses. There is nothing for the user to provide.
+The suggestions backend and the web search backend (v7 search API)
+require an `appid`. These are not user secrets: they are public values
+embedded in the Bing app itself — the suggestions one is what the app's
+search box uses, and the v7 search one is what the app uses to fetch
+related queries. There is nothing for the user to provide.
 
 ## Development
 
@@ -226,7 +243,9 @@ cargo fmt --all
 
 The `e2e_*` tests connect to the real Bing and verify that each vertical
 still parses. The parsers are also verified offline against real result
-pages captured during the analysis (fixtures).
+pages captured during the analysis (fixtures). Note that running the
+`e2e_*` tests in parallel (the default) can trip Bing's rate limiting
+(HTTP 429); rerun with `-- --test-threads=1` in that case.
 
 Manual check over stdio:
 

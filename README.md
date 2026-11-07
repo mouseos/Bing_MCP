@@ -117,7 +117,7 @@ async fn main() -> anyhow::Result<()> {
 | クライアント | `BingSearchClient`（`web_search` / `image_search` / `video_search` / `news_search` / `suggest`、戻り値は `anyhow::Result`） |
 | 共通の結果型 | `SearchResult<T>`、`PROVIDER`、`verticals()` |
 | 各検索の結果型 | `WebItem`、`ImageItem`、`VideoItem`、`NewsItem`、`SuggestResult` / `Suggestion` |
-| オフライン用ヘルパー | `parse_web_results` / `parse_image_results` / `parse_video_results` / `parse_news_results` / `parse_suggest_json`（保存したページHTML・JSONの解析）、`build_search_url` / `build_page_url` / `suggest_url`（URL生成）、`clean_text`、`decode_entities`、`urlencode` |
+| オフライン用ヘルパー | `parse_web_results`（v7検索APIのJSON）/ `parse_image_results` / `parse_video_results` / `parse_news_results` / `parse_suggest_json`（保存したページHTML・API JSONの解析）、`build_search_url` / `build_page_url` / `suggest_url` / `web_api_url`（URL生成）、`clean_text`、`decode_entities`、`urlencode` |
 
 結果型は serde の `Serialize` / `Deserialize` に対応し、JSONへの保存と読み戻しが
 できます。ネットワーク不要の利用例が
@@ -159,6 +159,7 @@ async fn main() -> anyhow::Result<()> {
   "count": 5,
   "total_hits": 70500,
   "next_page": 2,
+  "related_queries": ["味噌ラーメン レシピ 簡単", "味噌ラーメン 作り方 本格"],
   "items": [
     {
       "rank": 1,
@@ -171,7 +172,7 @@ async fn main() -> anyhow::Result<()> {
 }
 ```
 
-ウェブ検索の結果リンクは、Bingの計測リダイレクト（`/ck/a`）を展開した実URLで返ります。
+ウェブ検索の結果リンクは、ネイティブAPIが返す直接リンクそのままです（計測リダイレクトは含まれません）。
 
 ## 設計
 
@@ -188,10 +189,21 @@ crates/
 └── launcher/                 # 登録用GUI（egui）
 ```
 
-作り方は、Bing公式AndroidアプリのAPK解析で確認した仕様に基づきます。アプリには署名付きの
-ネイティブ検索APIはなく、WebViewで `https://www.bing.com/search?q=%s&form=%s&sdkhh=1` を
-開いているだけでした。本サーバーも同じく、Bingがブラウザへ配信しているサーバーレンダリング
-済みの結果ページをセレクタで読み取ります。証明書ピン留めやログインも検索経路にはありません。
+作り方は、Bing公式AndroidアプリのAPK解析で確認した仕様に基づきます。アプリの結果表示は
+WebViewで `https://www.bing.com/search?q=%s&form=%s&sdkhh=1` を開く方式で、画像・動画・
+ニュースは本サーバーも同じく、Bingがブラウザへ配信しているサーバーレンダリング済みの
+結果ページをセレクタで読み取ります。証明書ピン留めやログインも検索経路にはありません。
+ウェブ検索だけは、結果ページではなくアプリ内蔵のネイティブ検索APIを使います（次節）。
+
+### ウェブ検索だけ取得方式が違う理由
+
+ウェブ検索は、Bingのネイティブ検索API（`https://www.bingapis.com/api/v7/search`）を
+使います。このAPIはBingアプリに内蔵されていて、アプリ内での用途は関連クエリの取得
+ですが、応答にはウェブ検索の結果一式（タイトル、URL、スニペット、総件数）と関連クエリが
+含まれます。そのため本サーバーは応答をそのまま使い、`related_queries` も返すように
+なりました。URLは直接リンクで返るため、計測リダイレクトの展開も不要です。画像・動画・
+ニュースの結果はこのAPIの応答に含まれないため、この3件は従来どおりページ取得のままです。
+サジェストもアプリ自身のAPI（次々節）をそのまま使っています。
 
 ### 画像検索だけ取得方式が違う理由
 
@@ -201,11 +213,12 @@ crates/
 `bing_image_search` だけがこの方式を使います。この形式のページには総件数表示がないため、
 画像検索の結果に `total` は付きません。
 
-### サジェストの appid について
+### appid について
 
-サジェストのバックエンドだけは `appid` を要求します。これはユーザーの秘密情報ではなく、
-Bingアプリに埋め込まれている公開値です（アプリの検索ボックスが使っているものと同じ）。
-ユーザーが用意するものは何もありません。
+サジェストとウェブ検索（v7検索API）のバックエンドは `appid` を要求します。これは
+ユーザーの秘密情報ではなく、Bingアプリに埋め込まれている公開値です（サジェストは
+アプリの検索ボックスが使うもの、v7検索APIはアプリが関連クエリ取得に使うものと
+同じです）。ユーザーが用意するものは何もありません。
 
 ## 開発
 
@@ -218,6 +231,8 @@ cargo fmt --all
 
 `e2e_*` テストは実際の Bing に接続し、各検索が正しく解析できているかを検証します。
 パーサーは解析時に保存した実際の結果ページ（フィクスチャ）でもオフライン検証しています。
+なお `e2e_*` を既定の並列実行で一斉に走らせると、Bing側のレート制限（HTTP 429）に
+当たることがあります。その場合は `-- --test-threads=1` で直列に実行してください。
 
 stdio越しの手動確認:
 
